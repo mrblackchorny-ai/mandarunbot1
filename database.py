@@ -27,6 +27,7 @@ class Database:
                     referral_count INTEGER DEFAULT 0,
                     referrer_id    INTEGER DEFAULT NULL,
                     last_daily     TEXT DEFAULT NULL,
+                    ref_rewarded   INTEGER DEFAULT 0,
                     created_at     TEXT DEFAULT (datetime('now'))
                 );
                 CREATE TABLE IF NOT EXISTS settings (
@@ -40,6 +41,11 @@ class Database:
                     created_at TEXT DEFAULT (datetime('now'))
                 );
             """)
+            # Миграция: добавляем колонку если её нет (для существующих БД)
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN ref_rewarded INTEGER DEFAULT 0")
+            except Exception:
+                pass
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('daily_reward', '1')")
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('ref_reward', '3')")
 
@@ -78,12 +84,23 @@ class Database:
     def claim_daily(self, user_id):
         today = str(date.today())
         with self._conn() as conn:
-            row = conn.execute("SELECT last_daily FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            row = conn.execute("SELECT last_daily, referrer_id, ref_rewarded FROM users WHERE user_id = ?", (user_id,)).fetchone()
             if row and row["last_daily"] == today:
                 return "already_claimed"
             reward = self.get_setting("daily_reward", 1.0)
             conn.execute("UPDATE users SET balance = ROUND(balance + ?, 2), last_daily = ? WHERE user_id = ?", (reward, today, user_id))
-            return "claimed"
+
+            # Начисляем реферальный бонус рефереру только 1 раз — при первом получении daily
+            referrer_id = row["referrer_id"] if row else None
+            ref_rewarded = row["ref_rewarded"] if row else 0
+            ref_bonus_given = False
+            if referrer_id and not ref_rewarded:
+                ref_reward = self.get_setting("ref_reward", 3.0)
+                conn.execute("UPDATE users SET balance = ROUND(balance + ?, 2), referral_count = referral_count + 1 WHERE user_id = ?", (ref_reward, referrer_id))
+                conn.execute("UPDATE users SET ref_rewarded = 1 WHERE user_id = ?", (user_id,))
+                ref_bonus_given = True
+
+            return "claimed", referrer_id if ref_bonus_given else None
 
     def get_setting(self, key, default=None):
         with self._conn() as conn:
