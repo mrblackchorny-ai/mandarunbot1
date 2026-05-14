@@ -90,7 +90,7 @@ def check_and_pass_sponsors(user_id: int, chat_id: int) -> bool:
             return False
 
         if data.get("status") != "ok":
-            # Ошибка API — пропускаем проверку (чтобы не блокировать пользователя)
+            # Ошибка API — пропускаем, чтобы не блокировать пользователя из-за сбоя сервиса
             logger.warning(f"PiarFlow /sponsors error for {user_id}: {data}")
             return True
 
@@ -127,6 +127,20 @@ def check_and_pass_sponsors(user_id: int, chat_id: int) -> bool:
         )
         return False
 
+    if result.get("status") != "ok":
+        # Ошибка при проверке — сообщаем, не сбрасываем ссылки
+        logger.warning(f"PiarFlow /check error for {user_id}: {result}")
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔄 Проверить снова", callback_data="check_sponsors"))
+        bot.send_message(
+            chat_id,
+            "⚠️ *Не удалось проверить подписки*\n\n"
+            "Сервис временно недоступен. Попробуй через несколько секунд.",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+        return False
+
     if all_subscribed(result):
         # Всё выполнено — очищаем кэш
         user_sponsor_links.pop(user_id, None)
@@ -155,20 +169,7 @@ def cmd_start(message: types.Message):
     args = message.text.split()
     referrer_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
-    is_new = db.register_user(user.id, user.username or "", user.full_name, referrer_id)
-
-    if is_new and referrer_id and referrer_id != user.id:
-        ref_reward = db.get_setting("ref_reward", 3)
-        db.add_balance(referrer_id, ref_reward)
-        try:
-            bot.send_message(
-                referrer_id,
-                f"🌟 По вашей ссылке зарегистрировался новый пользователь!\n"
-                f"Начислено *{fmt(ref_reward)} ⭐️*",
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+    db.register_user(user.id, user.username or "", user.full_name, referrer_id)
 
     # Проверяем спонсоров при старте
     if not check_and_pass_sponsors(user.id, message.chat.id):
@@ -183,6 +184,7 @@ def cmd_start(message: types.Message):
         parse_mode="Markdown",
         reply_markup=main_menu(user.id)
     )
+
 
 
 @bot.callback_query_handler(func=lambda c: c.data == "check_sponsors")
@@ -268,7 +270,7 @@ def cb_daily(call: types.CallbackQuery):
     result = db.claim_daily(user_id)
     reward = db.get_setting("daily_reward", 1)
 
-    if result == "claimed":
+    if result[0] == "claimed":
         u = db.get_user(user_id)
         text = (
             f"🎁 *Ежедневный бонус получен!*\n\n"
@@ -276,6 +278,19 @@ def cb_daily(call: types.CallbackQuery):
             f"Баланс: *{fmt(u['balance'])} ⭐️*\n\n"
             f"Возвращайтесь завтра!"
         )
+        # Уведомляем реферера если его бонус только что начислен
+        referrer_id = result[1]
+        if referrer_id:
+            ref_reward = db.get_setting("ref_reward", 3)
+            try:
+                bot.send_message(
+                    referrer_id,
+                    f"🌟 Ваш реферал получил ежедневный бонус!\n"
+                    f"Начислено *{fmt(ref_reward)} ⭐️*",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
     else:
         text = (
             f"⏳ *Бонус уже получен сегодня*\n\n"
@@ -302,6 +317,7 @@ def cb_referral(call: types.CallbackQuery):
     bot.edit_message_text(
         f"👥 *Реферальная система*\n\n"
         f"За каждого приглашённого друга вы получаете *{fmt(ref_reward)} ⭐️*\n\n"
+        f"⚠️ *Важно:* реферал засчитывается только после того, как приглашённый получит свой первый ежедневный бонус\n\n"
         f"Ваших рефералов: *{u['referral_count']}*\n\n"
         f"🔗 Ваша ссылка:\n`{ref_link}`",
         call.message.chat.id, call.message.message_id,
