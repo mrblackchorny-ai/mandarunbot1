@@ -5,7 +5,7 @@ import os
 # ── Вставь свои данные сюда ──────────────────
 BOT_TOKEN = "8215392600:AAEtp6ogh7sqKikqg8q1JE_f0H9wdFM9Oi8"
 ADMIN_IDS_STR = "6737709054"
-PIARFLOW_API_KEY = "huRRHCyvwJmqs7uJo6ZDcq6w_7XFmHEv"
+PIARFLOW_API_KEY = "oIapztYHapmL7XrYLelZzmzL0A7NaGiq"
 # ─────────────────────────────────────────────
 
 os.environ["BOT_TOKEN"] = BOT_TOKEN
